@@ -1,0 +1,20 @@
+# Bytecode y caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Variables locales / secretos
+.env
+.env.*
+
+# IDE y sistema
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
