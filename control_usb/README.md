@@ -92,6 +92,18 @@ Ejemplo:
 G 100 -50 0 200 0 0 0
 ```
 
+## Velocidad de giro (pulsos STEP)
+
+La velocidad del giro **no** se controla con `PAUSA_ENTRE_PUNTOS`. Esa pausa solo espera entre waypoints del pick-and-place.
+
+La velocidad real es el **tiempo entre pulsos** en el firmware:
+
+1. **`VELOCIDAD_FACTOR` en `config.py`** (recomendado): `4` = un cuarto de rapidez. Al conectar, Python envia `F 4` a la placa. Sube el numero para ir mas lento (`6`, `8`...).
+2. **`velocidades[]` en `brazo_robotico_serial.ino`**: microsegundos base por motor (mayor = mas lento).
+3. **Monitor serial (prueba manual):** `F 6` → responde `OK FACTOR`.
+
+Tras cambiar el `.ino`, **subir de nuevo** el firmware con Arduino IDE (al menos una vez para tener el comando `F`).
+
 ## Calibracion
 
 Los valores `STEPS_PER_MM` y `STEPS_PER_DEGREE` en `config.py` deben medirse en el robot real:

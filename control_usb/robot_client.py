@@ -34,6 +34,9 @@ class RobotClient:
         self._ser = serial.Serial(self.port, self.baudrate, timeout=timeout)
         time.sleep(2.0)
         self._vaciar_buffer()
+        factor = getattr(config, "VELOCIDAD_FACTOR", None)
+        if factor is not None:
+            self.set_speed_factor(int(factor))
 
     def close(self) -> None:
         if self._ser.is_open:
@@ -59,6 +62,16 @@ class RobotClient:
             if linea:
                 return linea
         raise RobotSerialError(f"Timeout esperando respuesta del robot ({timeout}s)")
+
+    def set_speed_factor(self, factor: int) -> bool:
+        """Ajusta velocidad de giro en la placa (F factor). Mayor = mas lento."""
+        if factor < 1:
+            factor = 1
+        self._ser.write(f"F {factor}\n".encode("utf-8"))
+        try:
+            return self._leer_linea(timeout=2.0) == "OK FACTOR"
+        except RobotSerialError:
+            return False
 
     def ping(self) -> bool:
         self._ser.write(b"PING\n")

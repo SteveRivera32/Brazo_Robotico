@@ -35,33 +35,36 @@ def ejecutar_plan(
     dry_run: bool = False,
     segments: int = 3,
     pause: float | None = None,
+    log=print,
+    force_on_ik_fail: bool = False,
 ) -> None:
     if not plan:
-        print("Plan vacio.")
+        log("Plan vacio.")
         return
 
     fallidos = [m for m in plan if not m.ik.success]
     if fallidos:
-        print(f"Advertencia: {len(fallidos)} waypoint(s) no convergieron en IK.")
-        respuesta = input("Continuar de todos modos? [s/N]: ").strip().lower()
-        if respuesta != "s":
-            print("Cancelado.")
-            return
+        log(f"Advertencia: {len(fallidos)} waypoint(s) no convergieron en IK.")
+        if not force_on_ik_fail:
+            respuesta = input("Continuar de todos modos? [s/N]: ").strip().lower()
+            if respuesta != "s":
+                log("Cancelado.")
+                return
 
     cliente = None
     if not dry_run:
         from robot_client import RobotClient
 
-        print(f"Conectando a {port or config.PUERTO_SERIAL}...")
+        log(f"Conectando a {port or config.PUERTO_SERIAL}...")
         cliente = RobotClient(port=port)
         if not cliente.ping():
             raise RuntimeError("El robot no respondio PONG. Verifica firmware y puerto.")
-        print("Conexion OK (PONG)\n")
+        log("Conexion OK (PONG)\n")
 
     posicion_actual = JointState(dp=200.0, theta1=0.0, theta2=0.0, theta3=0.0, theta4=0.0, theta5=0.0, theta6=0.0)
     pausa = pause if pause is not None else config.PAUSA_ENTRE_PUNTOS
 
-    print(f"Ejecutando {len(plan)} waypoints ({'simulacion' if dry_run else 'robot real'})...\n")
+    log(f"Ejecutando {len(plan)} waypoints ({'simulacion' if dry_run else 'robot real'})...\n")
 
     for i, movimiento in enumerate(plan, start=1):
         wp = movimiento.waypoint
@@ -69,9 +72,9 @@ def ejecutar_plan(
         pasos = joint_delta_to_steps(posicion_actual, objetivo)
         posicion_actual = objetivo
 
-        print(f"[{i:02d}/{len(plan)}] {wp.name}")
-        print(f"       xyz objetivo: ({wp.x:.1f}, {wp.y:.1f}, {wp.z:.1f})")
-        print(f"       pasos delta : {pasos}")
+        log(f"[{i:02d}/{len(plan)}] {wp.name}")
+        log(f"       xyz objetivo: ({wp.x:.1f}, {wp.y:.1f}, {wp.z:.1f})")
+        log(f"       pasos delta : {pasos}")
 
         if dry_run:
             continue
@@ -83,7 +86,7 @@ def ejecutar_plan(
     if cliente is not None:
         cliente.close()
 
-    print("\nPick-and-place finalizado.")
+    log("\nPick-and-place finalizado.")
 
 
 def main() -> None:

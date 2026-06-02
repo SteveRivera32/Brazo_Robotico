@@ -17,8 +17,12 @@ const int NUM_MOTORES = 7;
 int dirPins[NUM_MOTORES]  = {15, 4, 17, 18, 22, 26, 33};
 int stepPins[NUM_MOTORES] = {2, 16, 5, 19, 23, 27, 25};
 
-// Tiempos entre pulsos en microsegundos (menor = mas rapido)
-int velocidades[NUM_MOTORES] = {400, 600, 500, 600, 600, 700, 1200};
+// Tiempos base entre pulsos en microsegundos (menor = mas rapido por motor)
+int velocidades[NUM_MOTORES] = {1200, 1200, 1200, 1200, 1200, 1200, 1200};
+
+// Multiplicador global del intervalo entre pulsos STEP (mayor = giro mas lento).
+// Tambien se puede cambiar en caliente con: F 4
+int velocidadFactor = 3;
 
 long pasosPendientes[NUM_MOTORES] = {0, 0, 0, 0, 0, 0, 0};
 bool direccionMotor[NUM_MOTORES] = {true, true, true, true, true, true, true};
@@ -103,7 +107,7 @@ void generarPulsos() {
       continue;
     }
 
-    if (ahora - previoMicros[i] >= (unsigned long)velocidades[i]) {
+    if (ahora - previoMicros[i] >= (unsigned long)velocidades[i] * velocidadFactor) {
       previoMicros[i] = ahora;
       estadoStep[i] = !estadoStep[i];
       digitalWrite(stepPins[i], estadoStep[i]);
@@ -132,6 +136,17 @@ void procesarLinea(String linea) {
 
   if (linea == "PING") {
     Serial.println("PONG");
+    return;
+  }
+
+  if (linea.startsWith("F ")) {
+    int factor = 0;
+    if (sscanf(linea.c_str(), "F %d", &factor) == 1 && factor >= 1 && factor <= 50) {
+      velocidadFactor = factor;
+      Serial.println("OK FACTOR");
+    } else {
+      Serial.println("ERR FACTOR");
+    }
     return;
   }
 
@@ -181,7 +196,7 @@ void setup() {
   Serial.begin(115200);
   configurarMotores();
   Serial.println("SISTEMA SERIAL OK");
-  Serial.println("Comandos: PING | G s0..s6 | M n pasos | S");
+  Serial.println("Comandos: PING | F factor | G s0..s6 | M n pasos | S");
 }
 
 void loop() {
