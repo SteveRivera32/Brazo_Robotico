@@ -11,7 +11,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from robot_kinematics import IKResult, JointState, inverse_kinematics_position, position_from_joints
+from robot_kinematics import IKResult, JointState
+from robot_frame import (
+    home_cartesian_coppelia,
+    inverse_kinematics_coppelia,
+    joint_home,
+    position_coppelia,
+)
 
 
 @dataclass
@@ -59,13 +65,16 @@ def plan_pick_and_place(
     """
     Genera una secuencia pick and place:
     home -> aproximar pick -> pick -> elevar -> aproximar place -> place -> elevar
+
+    Coordenadas pick/place en marco CoppeliaSim (mm).
     """
     pick_x, pick_y, pick_z = pick_xyz
     place_x, place_y, place_z = place_xyz
     safe_z = transit_z if transit_z is not None else max(pick_z, place_z) + approach_offset_mm
+    hx, hy, hz = home_cartesian_coppelia()
 
     keypoints = [
-        Waypoint("home", 700.0, -235.0, 200.0),
+        Waypoint("home", hx, hy, hz),
         Waypoint("aproximar_pick", pick_x, pick_y, pick_z + approach_offset_mm),
         Waypoint("pick", pick_x, pick_y, pick_z),
         Waypoint("elevar_pick", pick_x, pick_y, safe_z),
@@ -80,18 +89,18 @@ def plan_pick_and_place(
         expanded.extend(_interpolate_waypoints(start, end, segments_per_move))
 
     plan: list[PlannedMove] = []
-    last_successful = JointState(dp=200.0, theta1=0.0, theta2=0.0, theta3=0.0, theta4=0.0, theta5=0.0, theta6=0.0)
+    last_successful = joint_home()
 
     for waypoint in expanded:
         seed = last_successful.as_array() if preferred_pose is None else preferred_pose
-        ik = inverse_kinematics_position(
+        ik = inverse_kinematics_coppelia(
             (waypoint.x, waypoint.y, waypoint.z),
             preferred_pose=seed,
         )
         if ik.success:
             last_successful = ik.joints
 
-        verified = tuple(float(v) for v in position_from_joints(ik.joints))
+        verified = position_coppelia(ik.joints)
         plan.append(PlannedMove(waypoint=waypoint, ik=ik, verified_xyz=verified))
 
     return plan
@@ -116,9 +125,11 @@ def print_plan(plan: list[PlannedMove]) -> None:
 
 
 if __name__ == "__main__":
-    # Ejemplo: recoger en un punto y soltar en otro
-    pick = (650.0, -300.0, 120.0)
-    place = (450.0, -500.0, 120.0)
+    from robot_config import PICK_PLACE_DEFAULTS
+
+    d = PICK_PLACE_DEFAULTS
+    pick = (d["pick_x"], d["pick_y"], d["pick_z"])
+    place = (d["place_x"], d["place_y"], d["place_z"])
 
     print(f"Pick  : {pick}")
     print(f"Place : {place}")

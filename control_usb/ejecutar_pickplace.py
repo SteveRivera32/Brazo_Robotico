@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pick_and_place import plan_pick_and_place  # noqa: E402
-from robot_kinematics import JointState  # noqa: E402
+from robot_frame import joint_home  # noqa: E402
 
 import config  # noqa: E402
 from motion_utils import joint_delta_to_steps  # noqa: E402
@@ -61,7 +61,7 @@ def ejecutar_plan(
             raise RuntimeError("El robot no respondio PONG. Verifica firmware y puerto.")
         log("Conexion OK (PONG)\n")
 
-    posicion_actual = JointState(dp=200.0, theta1=0.0, theta2=0.0, theta3=0.0, theta4=0.0, theta5=0.0, theta6=0.0)
+    posicion_actual = joint_home()
     pausa = pause if pause is not None else config.PAUSA_ENTRE_PUNTOS
 
     log(f"Ejecutando {len(plan)} waypoints ({'simulacion' if dry_run else 'robot real'})...\n")

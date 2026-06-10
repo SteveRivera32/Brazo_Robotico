@@ -19,9 +19,9 @@ if str(ROOT) not in sys.path:
 
 import config
 from ejecutar_pickplace import ejecutar_plan
-from motion_utils import formatear_simulacion, pose_inicial_sim, simular_movimiento_relativo
 from pick_and_place import plan_pick_and_place
 from robot_client import RobotClient, RobotSerialError
+from simular_juntas import simular_movimiento_relativo
 
 MOTOR_LABELS = [
     "0 — Prismatica (dp)",
@@ -33,43 +33,66 @@ MOTOR_LABELS = [
     "6 — Theta6",
 ]
 
+SIM_JOINT_SPECS = [
+    ("dp", "Prismatica (dp, 0-420 mm)", "mm", "dp_mm"),
+    ("theta1", "Theta1", "deg", "theta_delta_deg"),
+    ("theta2", "Theta2", "deg", "theta_delta_deg"),
+    ("theta3", "Theta3", "deg", "theta_delta_deg"),
+    ("theta4", "Theta4", "deg", "theta_delta_deg"),
+    ("theta5", "Theta5", "deg", "theta_delta_deg"),
+    ("theta6", "Theta6", "deg", "theta_delta_deg"),
+]
+
 
 class PanelControl(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Brazo Robotico — Panel de control")
-        self.minsize(760, 620)
+        self.minsize(980, 620)
         self._busy = False
         self._robot: RobotClient | None = None
-        self._sim_slider_vars: list[tk.DoubleVar] = []
-        self._sim_value_labels: list[ttk.Label] = []
+        self._sim_scales: dict[str, tk.Scale] = {}
+        self._sim_vars: dict[str, tk.IntVar] = {}
+        self._sim_limits: dict[str, tuple[int, int]] = {}
+        self._sim_snap: dict[str, int] = {}
+        self._sim_scale_ancho = 560
 
         self._build_ui()
+        self._centrar_ventana()
+        self.bind("<Configure>", self._resize_sim_scales)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _centrar_ventana(self) -> None:
+        self.update_idletasks()
+        ancho = max(self.winfo_width(), self.minsize()[0])
+        alto = max(self.winfo_height(), self.minsize()[1])
+        x = (self.winfo_screenwidth() - ancho) // 2
+        y = (self.winfo_screenheight() - alto) // 2
+        self.geometry(f"{ancho}x{alto}+{x}+{y}")
 
     def _build_ui(self) -> None:
         main = ttk.Frame(self, padding=10)
         main.pack(fill=tk.BOTH, expand=True)
 
         notebook = ttk.Notebook(main)
-        notebook.pack(fill=tk.BOTH, expand=True)
+        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
-        tab_ops = ttk.Frame(notebook, padding=4)
+        tab_control = ttk.Frame(notebook, padding=4)
         tab_sim = ttk.Frame(notebook, padding=4)
-        notebook.add(tab_ops, text="Operaciones")
-        notebook.add(tab_sim, text="Simular posicion")
+        notebook.add(tab_control, text="Control USB")
+        notebook.add(tab_sim, text="Simular juntas")
 
-        self._build_tab_operaciones(tab_ops)
-        self._build_tab_simulacion(tab_sim)
+        self._build_tab_control(tab_control)
+        self._build_tab_simular(tab_sim)
 
         log_frame = ttk.LabelFrame(main, text="Salida", padding=4)
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-        self.log = scrolledtext.ScrolledText(log_frame, height=12, state=tk.DISABLED, wrap=tk.WORD)
+        log_frame.pack(fill=tk.BOTH, expand=True)
+        self.log = scrolledtext.ScrolledText(log_frame, height=14, state=tk.DISABLED, wrap=tk.WORD)
         self.log.pack(fill=tk.BOTH, expand=True)
 
-        self._log("Panel listo. Configura el puerto COM y usa los botones para probar.\n")
+        self._log("Panel listo. Configura el puerto COM y usa las pestanas para probar.\n")
 
-    def _build_tab_operaciones(self, parent: ttk.Frame) -> None:
+    def _build_tab_control(self, parent: ttk.Frame) -> None:
         conn = ttk.LabelFrame(parent, text="Conexion USB", padding=8)
         conn.pack(fill=tk.X, pady=(0, 8))
 
@@ -102,7 +125,7 @@ class PanelControl(tk.Tk):
         self.btn_motor.grid(row=0, column=4, padx=4)
 
         pp = ttk.LabelFrame(parent, text="Pick and place", padding=8)
-        pp.pack(fill=tk.X, pady=(0, 8))
+        pp.pack(fill=tk.X)
 
         mode_row = ttk.Frame(pp)
         mode_row.pack(fill=tk.X, pady=(0, 6))
@@ -152,115 +175,153 @@ class PanelControl(tk.Tk):
         self.btn_pp = ttk.Button(pp, text="Ejecutar pick and place", command=self._run_pickplace)
         self.btn_pp.pack(anchor=tk.W, pady=(8, 0))
 
-    def _build_tab_simulacion(self, parent: ttk.Frame) -> None:
-        info = ttk.LabelFrame(parent, text="Movimiento relativo por motor", padding=8)
-        info.pack(fill=tk.X, pady=(0, 8))
-
-        inicial = pose_inicial_sim().as_degrees()
-        ttk.Label(
-            info,
+    def _build_tab_simular(self, parent: ttk.Frame) -> None:
+        intro = ttk.Label(
+            parent,
             text=(
-                "Ajusta cuanto se movera cada motor desde la pose inicial. "
-                "En simulacion solo calcula la posicion; en robot real envia los pasos por USB."
+                "Ajusta la prismática (dp) de 0 a 420 mm y el movimiento relativo "
+                "de cada eje rotacional desde la pose home. La barra encaja en cada "
+                "número entero; también puedes escribir el valor a mano o usar la rueda "
+                "del ratón. Solo calculo: no mueve el robot."
             ),
-            wraplength=700,
-        ).pack(anchor=tk.W)
-        ttk.Label(
-            info,
-            text=(
-                f"Pose inicial: dp={inicial['dp_mm']:.0f} mm, "
-                f"theta1..6 = {inicial['theta1_deg']:.0f}, {inicial['theta2_deg']:.0f}, "
-                f"{inicial['theta3_deg']:.0f}, {inicial['theta4_deg']:.0f}, "
-                f"{inicial['theta5_deg']:.0f}, {inicial['theta6_deg']:.0f} deg"
-            ),
-        ).pack(anchor=tk.W, pady=(4, 0))
+            wraplength=900,
+        )
+        intro.pack(anchor=tk.W, pady=(0, 8))
 
-        mode_row = ttk.Frame(info)
-        mode_row.pack(fill=tk.X, pady=(8, 0))
-        self.var_modo_sim = tk.StringVar(value="simulacion")
-        ttk.Radiobutton(
-            mode_row,
-            text="Simulacion (solo calculo FK)",
-            variable=self.var_modo_sim,
-            value="simulacion",
-            command=self._actualizar_modo_sim,
-        ).pack(side=tk.LEFT)
-        ttk.Radiobutton(
-            mode_row,
-            text="Ejecutar en robot real",
-            variable=self.var_modo_sim,
-            value="real",
-            command=self._actualizar_modo_sim,
-        ).pack(side=tk.LEFT, padx=(16, 0))
-
-        sliders = ttk.LabelFrame(parent, text="Desplazamiento por motor", padding=8)
+        sliders = ttk.LabelFrame(parent, text="Movimiento relativo por motor", padding=8)
         sliders.pack(fill=tk.BOTH, expand=True)
 
-        dp_min, dp_max = config.SIM_SLIDER_RANGOS["dp_mm"]
-        th_min, th_max = config.SIM_SLIDER_RANGOS["theta_deg"]
+        limits = config.SIMULACION_JUNTAS_LIMITS
 
-        slider_specs = [
-            ("Prismatica (dp)", "mm", dp_min, dp_max, 1.0),
-            ("Theta1", "deg", th_min, th_max, 1.0),
-            ("Theta2", "deg", th_min, th_max, 1.0),
-            ("Theta3", "deg", th_min, th_max, 1.0),
-            ("Theta4", "deg", th_min, th_max, 1.0),
-            ("Theta5", "deg", th_min, th_max, 1.0),
-            ("Theta6", "deg", th_min, th_max, 1.0),
-        ]
+        snap_cfg = getattr(config, "SIM_SNAP_BARRA", {"dp_mm": 10, "theta_delta_deg": 5})
 
-        self._sim_slider_vars.clear()
-        self._sim_value_labels.clear()
+        for row, (key, label, unit, limit_key) in enumerate(SIM_JOINT_SPECS):
+            lo, hi = (int(limits[limit_key][0]), int(limits[limit_key][1]))
+            snap = int(snap_cfg.get(limit_key, 5))
+            self._sim_limits[key] = (lo, hi)
+            self._sim_snap[key] = snap
+            var = tk.IntVar(value=0)
+            self._sim_vars[key] = var
 
-        for i, (nombre, unidad, vmin, vmax, res) in enumerate(slider_specs):
-            row = ttk.Frame(sliders)
-            row.pack(fill=tk.X, pady=3)
+            row_frame = ttk.Frame(sliders)
+            row_frame.pack(fill=tk.X, pady=4)
 
-            ttk.Label(row, text=nombre, width=16).pack(side=tk.LEFT)
-            var = tk.DoubleVar(value=0.0)
-            self._sim_slider_vars.append(var)
+            ttk.Label(row_frame, text=label, width=16).pack(side=tk.LEFT)
 
-            def make_callback(idx: int, unit: str) -> callable:
-                def on_change(_value: str) -> None:
-                    val = self._sim_slider_vars[idx].get()
-                    self._sim_value_labels[idx].configure(text=f"{val:+.0f} {unit}")
-
-                return on_change
-
-            scale = ttk.Scale(
-                row,
-                from_=vmin,
-                to=vmax,
+            scale = tk.Scale(
+                row_frame,
+                from_=lo,
+                to=hi,
                 orient=tk.HORIZONTAL,
+                resolution=snap,
+                showvalue=False,
+                length=560,
+                sliderlength=36,
+                tickinterval=50 if key == "dp" else 45,
+                bigincrement=10 if key == "dp" else 15,
                 variable=var,
-                command=make_callback(i, unidad),
+                command=lambda _val, k=key: self._snap_sim_var(k),
             )
-            scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+            scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 4))
+            scale.bind("<MouseWheel>", lambda e, k=key: self._on_sim_wheel(e, k))
+            scale.bind("<ButtonRelease-1>", lambda _e, k=key: self._snap_sim_var(k))
+            self._sim_scales[key] = scale
 
-            val_label = ttk.Label(row, text=f"+0 {unidad}", width=12)
-            val_label.pack(side=tk.RIGHT)
-            self._sim_value_labels.append(val_label)
+            spin = ttk.Spinbox(
+                row_frame,
+                from_=lo,
+                to=hi,
+                increment=snap,
+                textvariable=var,
+                width=7,
+                justify=tk.RIGHT,
+            )
+            spin.pack(side=tk.LEFT, padx=(0, 2))
+            spin.bind("<Return>", lambda _e, k=key: self._clamp_sim_var(k))
+            spin.bind("<FocusOut>", lambda _e, k=key: self._clamp_sim_var(k))
+            ttk.Label(row_frame, text=unit, width=4).pack(side=tk.LEFT)
 
-        actions = ttk.Frame(parent)
-        actions.pack(fill=tk.X, pady=(8, 0))
-        self.btn_sim_reset = ttk.Button(actions, text="Restablecer barras", command=self._reset_sim_sliders)
-        self.btn_sim_reset.pack(side=tk.LEFT)
-        self.btn_sim = ttk.Button(actions, text="Calcular posicion final", command=self._run_simulacion_posicion)
-        self.btn_sim.pack(side=tk.LEFT, padx=(8, 0))
-
-        self.lbl_sim_resultado = ttk.Label(
-            parent,
-            text="Posicion final: —",
-            font=("Segoe UI", 10, "bold"),
-            wraplength=700,
+        btn_row = ttk.Frame(parent)
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btn_row, text="Restablecer barras", command=self._reset_sim_sliders).pack(side=tk.LEFT)
+        self.btn_simular = ttk.Button(
+            btn_row,
+            text="Calcular posicion final",
+            command=self._run_simular_juntas,
         )
-        self.lbl_sim_resultado.pack(anchor=tk.W, pady=(10, 0))
+        self.btn_simular.pack(side=tk.LEFT, padx=(8, 0))
 
-    def _actualizar_modo_sim(self) -> None:
-        if self.var_modo_sim.get() == "real":
-            self.btn_sim.configure(text="Ejecutar en robot")
-        else:
-            self.btn_sim.configure(text="Calcular posicion final")
+        self.var_sim_resultado = tk.StringVar(value="Posicion final: —")
+        ttk.Label(
+            parent,
+            textvariable=self.var_sim_resultado,
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor=tk.W, pady=(10, 0))
+        self.after_idle(self._resize_sim_scales)
+
+    def _resize_sim_scales(self, event: tk.Event | None = None) -> None:
+        if event is not None and event.widget is not self:
+            return
+        nuevo = min(max(self.winfo_width() - 280, 480), 720)
+        if nuevo == self._sim_scale_ancho:
+            return
+        self._sim_scale_ancho = nuevo
+        for scale in self._sim_scales.values():
+            scale.configure(length=nuevo)
+
+    def _clamp_sim_var(self, key: str) -> None:
+        lo, hi = self._sim_limits[key]
+        var = self._sim_vars[key]
+        try:
+            valor = int(round(float(var.get())))
+        except (tk.TclError, ValueError):
+            valor = 0
+        var.set(max(lo, min(hi, valor)))
+
+    def _snap_sim_var(self, key: str) -> None:
+        lo, hi = self._sim_limits[key]
+        snap = self._sim_snap[key]
+        var = self._sim_vars[key]
+        try:
+            valor = int(var.get())
+        except (tk.TclError, ValueError):
+            valor = 0
+        encajado = int(round(valor / snap) * snap)
+        var.set(max(lo, min(hi, encajado)))
+
+    def _on_sim_wheel(self, event: tk.Event, key: str) -> None:
+        lo, hi = self._sim_limits[key]
+        snap = self._sim_snap[key]
+        paso = snap if event.delta > 0 else -snap
+        var = self._sim_vars[key]
+        var.set(max(lo, min(hi, int(var.get()) + paso)))
+
+    def _reset_sim_sliders(self) -> None:
+        for key in self._sim_vars:
+            self._sim_vars[key].set(0)
+
+    def _leer_deltas_sim(self) -> dict[str, float]:
+        for key in self._sim_vars:
+            self._clamp_sim_var(key)
+        return {
+            "dp_mm": float(self._sim_vars["dp"].get()),
+            "theta1_deg": float(self._sim_vars["theta1"].get()),
+            "theta2_deg": float(self._sim_vars["theta2"].get()),
+            "theta3_deg": float(self._sim_vars["theta3"].get()),
+            "theta4_deg": float(self._sim_vars["theta4"].get()),
+            "theta5_deg": float(self._sim_vars["theta5"].get()),
+            "theta6_deg": float(self._sim_vars["theta6"].get()),
+        }
+
+    def _run_simular_juntas(self) -> None:
+        d = self._leer_deltas_sim()
+        resultado = simular_movimiento_relativo(**d)
+        pf = resultado.fk_final
+        self.var_sim_resultado.set(
+            f"Posicion final: X={pf.x:+.1f}  Y={pf.y:+.1f}  Z={pf.z:+.1f} mm  |  "
+            f"a={pf.alpha_deg:+.1f}°  b={pf.beta_deg:+.1f}°  g={pf.gamma_deg:+.1f}°"
+        )
+        self._log(f"\n{resultado.resumen()}")
 
     def _cargar_defaults_pp(self) -> None:
         for key, var in self._pp_fields.items():
@@ -276,22 +337,32 @@ class PanelControl(tk.Tk):
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         state = tk.DISABLED if busy else tk.NORMAL
-        for btn in (self.btn_test, self.btn_motor, self.btn_pp, self.btn_stop, self.btn_sim):
+        for btn in (self.btn_test, self.btn_motor, self.btn_pp):
             btn.configure(state=state)
+        # STOP siempre disponible aunque otra operacion este en curso
 
-    def _run_in_thread(self, target) -> None:
-        if self._busy:
+    def _report_error(self, msg: str) -> None:
+        self._log(f"\nERROR: {msg}\n")
+        messagebox.showerror("Error", msg)
+
+    def _clear_busy(self) -> None:
+        self._set_busy(False)
+
+    def _run_in_thread(self, target, *, allow_while_busy: bool = False) -> None:
+        if self._busy and not allow_while_busy:
             return
 
         def wrapper() -> None:
-            self._set_busy(True)
+            if not allow_while_busy:
+                self._set_busy(True)
             try:
                 target()
             except Exception as exc:
-                self.after(0, lambda: self._log(f"\nERROR: {exc}\n"))
-                self.after(0, lambda: messagebox.showerror("Error", str(exc)))
+                msg = str(exc)
+                self.after(0, lambda m=msg: self._report_error(m))
             finally:
-                self.after(0, lambda: self._set_busy(False))
+                if not allow_while_busy:
+                    self.after(0, self._clear_busy)
 
         threading.Thread(target=wrapper, daemon=True).start()
 
@@ -302,11 +373,19 @@ class PanelControl(tk.Tk):
         def task() -> None:
             puerto = self._puerto()
             self.after(0, lambda: self._log(f"\n--- Test conexion ({puerto}) ---\n"))
-            with RobotClient(port=puerto) as robot:
+            self.after(0, lambda: self._log("Abriendo puerto...\n"))
+            with RobotClient(port=puerto, configure_speed=False) as robot:
+                self.after(0, lambda: self._log("Enviando PING...\n"))
                 if robot.ping():
                     self.after(0, lambda: self._log("OK — El robot respondio PONG\n"))
                 else:
-                    raise RobotSerialError("Respuesta inesperada al PING")
+                    msg = (
+                        f"Sin respuesta en {config.TIMEOUT_PING:.0f}s. "
+                        "El puerto abrio pero el robot no respondio PONG. "
+                        "Revisa firmware, alimentacion y que sea el puerto correcto."
+                    )
+                    self.after(0, lambda m=msg: self._log(f"FALLO — {m}\n"))
+                    raise RobotSerialError(msg)
 
         self._run_in_thread(task)
 
@@ -417,92 +496,15 @@ class PanelControl(tk.Tk):
 
         self._run_in_thread(task)
 
-    def _reset_sim_sliders(self) -> None:
-        unidades = ["mm", "deg", "deg", "deg", "deg", "deg", "deg"]
-        for i, var in enumerate(self._sim_slider_vars):
-            var.set(0.0)
-            self._sim_value_labels[i].configure(text=f"+0 {unidades[i]}")
-        self.lbl_sim_resultado.configure(text="Posicion final: —")
-        self._log("Barras de simulacion restablecidas a cero.\n")
-
-    def _run_simulacion_posicion(self) -> None:
-        delta_dp = self._sim_slider_vars[0].get()
-        delta_thetas = tuple(var.get() for var in self._sim_slider_vars[1:])
-        ejecutar_real = self.var_modo_sim.get() == "real"
-
-        def task() -> None:
-            try:
-                resultado = simular_movimiento_relativo(delta_dp, delta_thetas)
-            except Exception as exc:
-                self.after(0, lambda: messagebox.showerror("Error de simulacion", str(exc)))
-                return
-
-            x, y, z = resultado.posicion_xyz
-            ejecutado = False
-
-            if ejecutar_real:
-                if all(p == 0 for p in resultado.pasos_motor):
-                    self.after(
-                        0,
-                        lambda: messagebox.showinfo(
-                            "Sin movimiento",
-                            "Todos los desplazamientos estan en cero. No hay nada que enviar al robot.",
-                        ),
-                    )
-                else:
-                    event = threading.Event()
-                    confirmar: list[bool] = [False]
-
-                    def preguntar() -> None:
-                        confirmar[0] = messagebox.askyesno(
-                            "Confirmar movimiento",
-                            "Se enviaran estos pasos al robot:\n"
-                            f"{resultado.pasos_motor}\n\n"
-                            "¿Continuar?",
-                        )
-                        event.set()
-
-                    self.after(0, preguntar)
-                    event.wait()
-                    if confirmar[0]:
-                        puerto = self._puerto()
-                        self.after(
-                            0,
-                            lambda: self._log(f"\n--- Movimiento articulado ({puerto}) ---\n"),
-                        )
-                        with RobotClient(port=puerto) as robot:
-                            if not robot.ping():
-                                raise RobotSerialError("FALLO PING — verifica conexion y firmware.")
-                            self.after(
-                                0,
-                                lambda: self._log(f"Pasos enviados: {resultado.pasos_motor}\n"),
-                            )
-                            robot.move_steps(resultado.pasos_motor)
-                        ejecutado = True
-                        self.after(0, lambda: self._log("LISTO — movimiento completado.\n"))
-                    else:
-                        self.after(0, lambda: self._log("Ejecucion cancelada por el usuario.\n"))
-
-            texto = formatear_simulacion(resultado, ejecutado=ejecutado)
-            self.after(
-                0,
-                lambda: self.lbl_sim_resultado.configure(
-                    text=f"Posicion final: x={x:.1f} mm  |  y={y:.1f} mm  |  z={z:.1f} mm"
-                ),
-            )
-            self.after(0, lambda: self._log(f"\n{texto}\n"))
-
-        self._run_in_thread(task)
-
     def _run_stop(self) -> None:
         def task() -> None:
             puerto = self._puerto()
             self.after(0, lambda: self._log(f"\n--- Paro de emergencia ({puerto}) ---\n"))
-            with RobotClient(port=puerto) as robot:
+            with RobotClient(port=puerto, configure_speed=False) as robot:
                 robot.stop()
             self.after(0, lambda: self._log("STOP enviado.\n"))
 
-        self._run_in_thread(task)
+        self._run_in_thread(task, allow_while_busy=True)
 
     def _on_close(self) -> None:
         if self._robot is not None:
