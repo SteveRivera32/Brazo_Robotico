@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 import config
 from ejecutar_pickplace import ejecutar_plan
 from pick_and_place import plan_pick_and_place
+from motion_utils import joint_delta_to_steps
 from robot_client import RobotClient, RobotSerialError
 from simular_juntas import simular_movimiento_relativo
 
@@ -182,7 +183,8 @@ class PanelControl(tk.Tk):
                 "Ajusta la prismática (dp) de 0 a 420 mm y el movimiento relativo "
                 "de cada eje rotacional desde la pose home. La barra encaja en cada "
                 "número entero; también puedes escribir el valor a mano o usar la rueda "
-                "del ratón. Solo calculo: no mueve el robot."
+                "del ratón. Usa «Calcular posicion final» para simular o "
+                "«Mover robot» para ejecutar el movimiento en el brazo real."
             ),
             wraplength=900,
         )
@@ -250,6 +252,12 @@ class PanelControl(tk.Tk):
             command=self._run_simular_juntas,
         )
         self.btn_simular.pack(side=tk.LEFT, padx=(8, 0))
+        self.btn_mover_sim = ttk.Button(
+            btn_row,
+            text="Mover robot",
+            command=self._run_mover_sim_juntas,
+        )
+        self.btn_mover_sim.pack(side=tk.LEFT, padx=(8, 0))
 
         self.var_sim_resultado = tk.StringVar(value="Posicion final: —")
         ttk.Label(
@@ -323,6 +331,50 @@ class PanelControl(tk.Tk):
         )
         self._log(f"\n{resultado.resumen()}")
 
+    def _run_mover_sim_juntas(self) -> None:
+        d = self._leer_deltas_sim()
+        resultado = simular_movimiento_relativo(**d)
+        pasos = joint_delta_to_steps(resultado.pose_inicial, resultado.pose_final)
+
+        if not any(pasos):
+            messagebox.showinfo(
+                "Sin movimiento",
+                "Todos los valores estan en cero; no hay nada que mover.",
+            )
+            return
+
+        resumen = (
+            f"dp={d['dp_mm']:.0f} mm | "
+            f"t1={d['theta1_deg']:+.0f} t2={d['theta2_deg']:+.0f} t3={d['theta3_deg']:+.0f} | "
+            f"t4={d['theta4_deg']:+.0f} t5={d['theta5_deg']:+.0f} t6={d['theta6_deg']:+.0f} (deg)\n\n"
+            f"Pasos a enviar: {pasos}\n\n"
+            "¿Mover el robot con estos valores?"
+        )
+        if not messagebox.askyesno("Confirmar movimiento", resumen):
+            return
+
+        puerto = self._puerto()
+
+        def task() -> None:
+            self.after(0, lambda: self._log(f"\n--- Mover juntas ({puerto}) ---\n"))
+            self.after(0, lambda: self._log(f"  Deltas : {d}\n"))
+            self.after(0, lambda: self._log(f"  Pasos  : {pasos}\n"))
+            with RobotClient(port=puerto) as robot:
+                if not robot.ping():
+                    raise RobotSerialError("FALLO PING")
+                robot.move_steps(pasos)
+            pf = resultado.fk_final
+            self.after(
+                0,
+                lambda: self.var_sim_resultado.set(
+                    f"Posicion final: X={pf.x:+.1f}  Y={pf.y:+.1f}  Z={pf.z:+.1f} mm  |  "
+                    f"a={pf.alpha_deg:+.1f}°  b={pf.beta_deg:+.1f}°  g={pf.gamma_deg:+.1f}°"
+                ),
+            )
+            self.after(0, lambda: self._log("LISTO\n"))
+
+        self._run_in_thread(task)
+
     def _cargar_defaults_pp(self) -> None:
         for key, var in self._pp_fields.items():
             var.set(str(config.PICK_PLACE_DEFAULTS[key]))
@@ -337,7 +389,7 @@ class PanelControl(tk.Tk):
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         state = tk.DISABLED if busy else tk.NORMAL
-        for btn in (self.btn_test, self.btn_motor, self.btn_pp):
+        for btn in (self.btn_test, self.btn_motor, self.btn_pp, self.btn_simular, self.btn_mover_sim):
             btn.configure(state=state)
         # STOP siempre disponible aunque otra operacion este en curso
 
