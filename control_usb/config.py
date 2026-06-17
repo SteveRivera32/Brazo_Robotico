@@ -25,7 +25,7 @@ ESPERA_PUERTO = 0.3
 
 # Calibracion de motores (AJUSTAR en banco de pruebas)
 STEPS_PER_MM = 100.0
-STEPS_PER_DEGREE = 80.0
+STEPS_PER_DEGREE = 18.0
 
 # Pose 'home' fisica del robot (juntas en cero mecanico)
 HOME_JOINTS = {

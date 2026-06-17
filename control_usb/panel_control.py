@@ -348,6 +348,7 @@ class PanelControl(tk.Tk):
             f"t1={d['theta1_deg']:+.0f} t2={d['theta2_deg']:+.0f} t3={d['theta3_deg']:+.0f} | "
             f"t4={d['theta4_deg']:+.0f} t5={d['theta5_deg']:+.0f} t6={d['theta6_deg']:+.0f} (deg)\n\n"
             f"Pasos a enviar: {pasos}\n\n"
+            "Los motores se moveran uno por uno (en orden dp, theta1..theta6).\n\n"
             "¿Mover el robot con estos valores?"
         )
         if not messagebox.askyesno("Confirmar movimiento", resumen):
@@ -362,7 +363,12 @@ class PanelControl(tk.Tk):
             with RobotClient(port=puerto) as robot:
                 if not robot.ping():
                     raise RobotSerialError("FALLO PING")
-                robot.move_steps(pasos)
+                for i, n in enumerate(pasos):
+                    if n == 0:
+                        continue
+                    etiqueta = MOTOR_LABELS[i]
+                    self.after(0, lambda e=etiqueta, p=n: self._log(f"  -> {e}: {p} pasos\n"))
+                    robot.move_motor(i, n)
             pf = resultado.fk_final
             self.after(
                 0,
