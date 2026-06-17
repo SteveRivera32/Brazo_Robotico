@@ -24,6 +24,18 @@ int velocidades[NUM_MOTORES] = {1200, 1200, 1200, 1200, 1200, 1200, 1200};
 // Tambien se puede cambiar en caliente con: F 4
 int velocidadFactor = 3;
 
+// Inversion de direccion por motor (indice 0..6 = motores 1..7).
+// true = el pin DIR se invierte respecto al sentido del comando (+/- pasos).
+bool invertirDireccion[NUM_MOTORES] = {
+  false,  // 0: dp / motor 1
+  false,  // 1: theta1 / motor 2
+  false,  // 2: theta2 / motor 3
+  false,  // 3: theta3 / motor 4
+  true,   // 4: theta4 / motor 5
+  false,  // 5: theta5 / motor 6
+  false   // 6: theta6 / motor 7
+};
+
 long pasosPendientes[NUM_MOTORES] = {0, 0, 0, 0, 0, 0, 0};
 bool direccionMotor[NUM_MOTORES] = {true, true, true, true, true, true, true};
 unsigned long previoMicros[NUM_MOTORES] = {0, 0, 0, 0, 0, 0, 0};
@@ -34,8 +46,7 @@ String bufferSerial = "";
 
 void aplicarDireccion(int i, bool adelante) {
   direccionMotor[i] = adelante;
-  // Motor 5 (indice 4): logica de direccion invertida como en prograActual.cpp
-  bool dirReal = (i == 4) ? !direccionMotor[i] : direccionMotor[i];
+  bool dirReal = invertirDireccion[i] ? !direccionMotor[i] : direccionMotor[i];
   digitalWrite(dirPins[i], dirReal);
 }
 
